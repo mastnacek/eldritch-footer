@@ -1,0 +1,41 @@
+{
+  "name": "eldritch-footer",
+  "version": "1.0.0",
+  "description": "Pi custom footer/statusline with Kimi + Z.ai (GLM Coding Plan) quota meters, context-progress bar, thinking-level colors, and colored segments. Toggle with /footer on|off|status.",
+  "type": "module",
+  "license": "MIT",
+  "author": "jara",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "footer",
+    "statusline",
+    "kimi",
+    "zai",
+    "glm",
+    "quota"
+  ],
+  "files": [
+    "README.md",
+    "index.ts",
+    "package.json"
+  ],
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "homepage": "https://github.com/mastnacek/eldritch-footer#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mastnacek/eldritch-footer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mastnacek/eldritch-footer/issues"
+  }
+}
