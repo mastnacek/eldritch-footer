@@ -61,8 +61,7 @@ function readKimiApiKey(): string | undefined {
 		// API-key auth stores `key`; OAuth (/login) stores `access` + `expires`.
 		// Accept both, but reject an expired OAuth token (pi refreshes it on next
 		// model use; the meter simply stays absent until then).
-		if (typeof entry?.key === "string" && entry.key.length > 0)
-			return entry.key;
+		if (typeof entry?.key === "string" && entry.key.length > 0) return entry.key;
 		if (
 			typeof entry?.access === "string" &&
 			entry.access.length > 0 &&
@@ -119,10 +118,7 @@ function readZaiApiKey(): { key: string; host: string } | undefined {
 		let host = "https://api.z.ai";
 		try {
 			const store = JSON.parse(
-				readFileSync(
-					join(homedir(), ".pi", "agent", "models-store.json"),
-					"utf8",
-				),
+				readFileSync(join(homedir(), ".pi", "agent", "models-store.json"), "utf8"),
 			);
 			const model = (store?.["zai-coding-cn"] ?? store?.["zai-coding"])
 				?.models?.[0];
@@ -366,8 +362,7 @@ export default function (pi: ExtensionAPI) {
 
 					// ---- context usage ----
 					const usage = ctx.getContextUsage();
-					const contextWindow =
-						usage?.contextWindow ?? model?.contextWindow ?? 0;
+					const contextWindow = usage?.contextWindow ?? model?.contextWindow ?? 0;
 					const percentValue = usage?.percent ?? null;
 					const ctxColor: ThemeColor =
 						percentValue !== null && percentValue > 90
@@ -410,8 +405,7 @@ export default function (pi: ExtensionAPI) {
 						const level = pi.getThinkingLevel() || "off";
 						const token = THINKING_TOKEN[level] ?? "thinkingOff";
 						right +=
-							dim(" • ") +
-							theme.fg(token, level === "off" ? "thinking off" : level);
+							dim(" • ") + theme.fg(token, level === "off" ? "thinking off" : level);
 					}
 					if (model && footerData.getAvailableProviderCount() > 1) {
 						right = dim(`(${model.provider}) `) + right;
@@ -425,17 +419,13 @@ export default function (pi: ExtensionAPI) {
 					if (cacheRead || cacheWrite) {
 						stats.push(theme.fg("muted", `cache ${formatTokens(cacheRead)}`));
 						if (cacheWrite)
-							stats.push(
-								theme.fg("muted", `zapis ${formatTokens(cacheWrite)}`),
-							);
+							stats.push(theme.fg("muted", `zapis ${formatTokens(cacheWrite)}`));
 					}
 					if (
 						(cacheRead > 0 || cacheWrite > 0) &&
 						latestCacheHitRate !== undefined
 					) {
-						stats.push(
-							theme.fg("accent", `hity ${latestCacheHitRate.toFixed(0)}%`),
-						);
+						stats.push(theme.fg("accent", `hity ${latestCacheHitRate.toFixed(0)}%`));
 					}
 					// kimi-coding is subscription-backed (same special-case as built-in footer)
 					const usingSubscription = model?.provider === "kimi-coding";
@@ -456,8 +446,7 @@ export default function (pi: ExtensionAPI) {
 					// ---- line C: context hero bar (compaction signal) ----
 					const barW = Math.max(10, Math.min(22, Math.floor(width * 0.22)));
 					const bar = theme.fg(ctxColor, contextBar(percentValue, barW));
-					const pct =
-						percentValue !== null ? `${percentValue.toFixed(1)}%` : "?";
+					const pct = percentValue === null ? "?" : `${percentValue.toFixed(1)}%`;
 					const autoStr = isAutoCompactEnabled(ctx.cwd) ? dim(" (auto)") : "";
 					const lineC = truncateToWidth(
 						dim("kontext ") +
@@ -536,8 +525,7 @@ export default function (pi: ExtensionAPI) {
 							(l) => l.type === "TOKENS_LIMIT",
 						);
 						// unit=3 (hodiny) = 5h okno, unit=6 (dny) = týden
-						const fiveHour =
-							zaiLimits.find((l) => l.unit === 3) ?? zaiLimits[0];
+						const fiveHour = zaiLimits.find((l) => l.unit === 3) ?? zaiLimits[0];
 						const weekly = zaiLimits.find((l) => l.unit === 6) ?? zaiLimits[1];
 						const zaiParts = [
 							theme.bg("customMessageBg", theme.fg("accent", " z.ai ")),
@@ -549,10 +537,7 @@ export default function (pi: ExtensionAPI) {
 						if (search && typeof search.usage === "number") {
 							zaiParts.push(
 								dim("hledání ") +
-									theme.fg(
-										"muted",
-										`${search.currentValue ?? 0}/${search.usage}`,
-									),
+									theme.fg("muted", `${search.currentValue ?? 0}/${search.usage}`),
 							);
 						}
 						quotaLine = truncateToWidth(
