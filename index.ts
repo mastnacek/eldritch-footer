@@ -637,13 +637,56 @@ export default function (pi: ExtensionAPI) {
 		apply(ctx);
 	});
 
+	const FOOTER_DOCS: Record<string, string> = {
+		on: "zapne vlastní statusline / footer",
+		off: "vypne vlastní statusline a vrátí výchozí footer",
+		toggle: "přepne footer (zapnuto / vypnuto)",
+		status: "zobrazí aktuální stav a přehled kvót",
+		refresh: "vynutí okamžitou aktualizaci kvót Kimi a Z.ai",
+		help: "zobrazí podrobnou nápovědu",
+	};
+
 	pi.registerCommand("footer", {
 		description:
-			"Custom footer with Kimi + Z.ai/GLM quota meters. Usage: /footer on|off|status|help",
+			"eldritch-footer: custom statusline s kvótami Kimi/Z.ai, kontextovým pruhem a barvami thinkingu",
+		getArgumentCompletions: (prefix: string) => {
+			const tokens = prefix.split(/\s+/).filter(Boolean);
+			const typed = tokens[0] ?? "";
+			const SUBS: Array<[string, string]> = Object.entries(FOOTER_DOCS);
+			const items = SUBS.filter(([s]) => s.startsWith(typed.toLowerCase())).map(
+				([value, description]) => ({ value, label: value, description }),
+			);
+			return items.length > 0 ? items : null;
+		},
 		handler: async (args, ctx) => {
 			const [sub] = args.trim().split(/\s+/).filter(Boolean);
-			if (!sub || sub === "status") {
+			if (sub === "status") {
 				ctx.ui.notify(statusText(), "info");
+				return;
+			}
+			if (!sub || sub === "help") {
+				const kimi = readKimiApiKey() ? "nastaven (API klíč / OAuth)" : "nenalezen";
+				const zai = readZaiApiKey() ? "nastaven (API klíč)" : "nenalezen";
+				ctx.ui.notify(
+					[
+						`eldritch-footer — stav: ${enabled ? "ZAPNUTO (ON)" : "VYPNUTO (OFF)"}`,
+						"Vlastní víceřádkový footer / statusline s měřiči kvót Kimi / Z.ai, pruhem kontextu a barvami thinkingu.",
+						"",
+						"Příkazy:",
+						"/footer             — tato nápověda + stav",
+						"/footer on          — zapne vlastní statusline",
+						"/footer off         — vypne vlastní statusline (vrátí default footer)",
+						"/footer toggle      — přepne stav zapnuto/vypnuto",
+						"/footer refresh     — okamžitě znovu načte kvóty Kimi a Z.ai",
+						"/footer status      — zobrazí jednořádkový stav",
+						"",
+						`Kimi kvóta API klíč: ${kimi}`,
+						`Z.ai kvóta API klíč: ${zai}`,
+						`Auto-compaction detekce: ${isAutoCompactEnabled(ctx.cwd) ? "aktivní" : "vypnuto"}`,
+						"Stav se ukládá do session — přežije /reload i restart.",
+					].join("\n"),
+					"info",
+				);
 				return;
 			}
 			if (sub === "on" || sub === "enable") {
@@ -654,15 +697,18 @@ export default function (pi: ExtensionAPI) {
 				setEnabled(ctx, false);
 				return;
 			}
-			if (sub === "help") {
-				ctx.ui.notify(
-					"/footer on|off|status|help — custom footer: Kimi + Z.ai/GLM quota meters, context bar, thinking level",
-					"info",
-				);
+			if (sub === "toggle") {
+				setEnabled(ctx, !enabled);
+				return;
+			}
+			if (sub === "refresh") {
+				void refreshKimiQuota(true);
+				void refreshZaiQuota(true);
+				ctx.ui.notify("Eldritch footer: kvóty obnoveny", "info");
 				return;
 			}
 			ctx.ui.notify(
-				"Unknown command. Use: /footer on|off|status|help",
+				"Neznámý příkaz. Použijte: /footer [on|off|toggle|status|refresh|help]",
 				"warning",
 			);
 		},
