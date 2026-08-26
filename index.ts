@@ -2,8 +2,8 @@
  * Eldritch Footer — installable Pi package.
  *
  * Custom footer/statusline replacing the built-in one:
- *   Line 1: 📁 cwd (~shortened) │ 🌿 git branch │ 🏷️ session ...... (provider) model • thinking
- *   Line 2: 📊 context bar % / window │ 💰 cost │ ⬆️ input ⬇️ output │ 📦 cache (hit%)
+ *   Line 1: 📁 cwd (~shortened) │ 🌿 branch ●dirty/○clean ▸ahead │ 🏷️ session
+ *   Line 2: 📊 context bar % / window │ 💰 cost │ ⬆️ input ⬇️ output │ 📦 cache (hit%) │ (provider) model • thinking
  *   Line 3: Kimi quota (týden · 5h okno)           — when provider is kimi-coding
  *           Z.ai/GLM quota (5h okno · týden · hledání) — when provider is zai-coding(-cn)
  *   Line 4: extension statuses (from ctx.ui.setStatus)
@@ -26,11 +26,43 @@ import type {
 	ThemeColor,
 } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { execSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 
 const CONFIG_ENTRY_TYPE = "eldritch-footer-config";
+
+/** Git status cache — refreshed on turn_end and branch change. */
+interface GitStatus {
+	dirty: boolean;
+	ahead: number;
+	behind: number;
+}
+let cachedGitStatus: GitStatus = { dirty: false, ahead: 0, behind: 0 };
+let gitCacheCwd = "";
+
+function refreshGitStatus(cwd: string): void {
+	gitCacheCwd = cwd;
+	try {
+		const s = execSync("git status --porcelain=v1 --branch", {
+			cwd,
+			timeout: 2000,
+			stdio: ["pipe", "pipe", "pipe"],
+		}).toString();
+		const first = s.split("\n")[0] ?? "";
+		const dirty = s.split("\n").slice(1).some((l) => l.length > 0);
+		const aheadMatch = first.match(/\+(\d+)/);
+		const behindMatch = first.match(/-(\d+)/);
+		cachedGitStatus = {
+			dirty,
+			ahead: aheadMatch ? Number(aheadMatch[1]) : 0,
+			behind: behindMatch ? Number(behindMatch[1]) : 0,
+		};
+	} catch {
+		cachedGitStatus = { dirty: false, ahead: 0, behind: 0 };
+	}
+}
 
 /** Kimi Code quota (subscription usage) — polled from the usages endpoint. */
 interface KimiUsageEntry {
@@ -369,6 +401,9 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("turn_end", () => void refreshZaiQuota());
 
+	// Refresh git status cache on every turn and on branch changes
+	pi.on("turn_end", (_event, ctx) => refreshGitStatus(ctx.cwd));
+
 	function apply(ctx: ExtensionContext) {
 		if (!enabled || ctx.mode !== "tui") {
 			ctx.ui.setFooter(undefined);
@@ -383,7 +418,10 @@ export default function (pi: ExtensionAPI) {
 
 		ctx.ui.setFooter((tui, theme: Theme, footerData: FooterData) => {
 			requestRender = () => tui.requestRender();
-			const unsubBranch = footerData.onBranchChange(() => tui.requestRender());
+				const unsubBranch = footerData.onBranchChange(() => {
+					refreshGitStatus(ctx.cwd);
+					tui.requestRender();
+				});
 
 			return {
 				dispose: () => {
@@ -473,26 +511,26 @@ export default function (pi: ExtensionAPI) {
 						return truncateToWidth(left, width, theme.fg("dim", "…"));
 					};
 
-					// ---- line A: location (left) + (provider) model • thinking (right) ----
-					const locParts = [theme.fg("accent", `📁 ${formatCwd(sm.getCwd())}`)];
+
+
+					// ---- line A: location only (left-aligned) ----
+					const locParts = [theme.fg("muted", `📁 ${formatCwd(sm.getCwd())}`)];
 					const branch = footerData.getGitBranch();
-					if (branch) locParts.push(theme.fg("success", `🌿 ${branch}`));
+					if (branch) {
+						const gs = cachedGitStatus;
+						const dirtyIcon = gs.dirty ? "●" : "○";
+						const dirtyColor: ThemeColor = gs.dirty ? "warning" : "success";
+						let branchStr = `🌿 ${branch} ${theme.fg(dirtyColor, dirtyIcon)}`;
+						if (gs.ahead > 0) branchStr += dim(` ▸${gs.ahead}`);
+						if (gs.behind > 0) branchStr += dim(` ◂${gs.behind}`);
+						locParts.push(theme.fg("success", branchStr));
+					}
 					const sessionName = sm.getSessionName();
 					if (sessionName)
 						locParts.push(theme.fg("customMessageLabel", `🏷️ ${sessionName}`));
 					const locLeft = locParts.join(sep);
 
-					let right = `${theme.fg("accent", model?.id || "no-model")}`;
-					if (model?.reasoning) {
-						const level = pi.getThinkingLevel() || "off";
-						const token = THINKING_TOKEN[level] ?? "thinkingOff";
-						right +=
-							dim(" • ") + theme.fg(token, level === "off" ? "thinking off" : level);
-					}
-					if (model && footerData.getAvailableProviderCount() > 1) {
-						right = dim(`(${model.provider}) `) + right;
-					}
-					const lineA = fitLR(locLeft, right);
+					const lineA = fitLR(locLeft, "");
 
 					// ---- line BC: context + cost + usage stats (single line) ----
 					const barW = Math.max(10, Math.min(22, Math.floor(width * 0.22)));
@@ -538,6 +576,19 @@ export default function (pi: ExtensionAPI) {
 						}
 						statsParts.push(theme.fg("muted", cacheStr));
 					}
+
+					// 💻 model segment (moved from line A)
+					let modelStr = theme.fg("accent", model?.id || "no-model");
+					if (model?.reasoning) {
+						const level = pi.getThinkingLevel() || "off";
+						const token = THINKING_TOKEN[level] ?? "thinkingOff";
+						modelStr +=
+							dim(" • ") + theme.fg(token, level === "off" ? "thinking off" : level);
+					}
+					if (model && footerData.getAvailableProviderCount() > 1) {
+						modelStr = dim(`(${model.provider}) `) + modelStr;
+					}
+					statsParts.push(modelStr);
 
 					const lineStats = truncateToWidth(
 						statsParts.join(dim(" │ ")) + compactionWarning,
