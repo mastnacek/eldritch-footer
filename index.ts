@@ -547,12 +547,6 @@ export default function (pi: ExtensionAPI) {
 					const bar = theme.fg(ctxColor, contextBar(percentValue, barW));
 					const pct = percentValue === null ? "?" : `${percentValue.toFixed(1)}%`;
 					const autoStr = isAutoCompactEnabled(ctx.cwd) ? dim(" (auto)") : "";
-					let compactionWarning = "";
-					if (isImminentCompaction) {
-						compactionWarning = " " + theme.fg("error", "⚠️ [KOMPAKCE BLÍZKO]");
-					} else if (isNearCompaction) {
-						compactionWarning = " " + theme.fg("warning", "⚡ [80%+ zaplnění]");
-					}
 
 					// kimi-coding is subscription-backed
 					const usingSubscription = model?.provider === "kimi-coding";
@@ -603,7 +597,7 @@ export default function (pi: ExtensionAPI) {
 					statsParts.push(modelStr);
 
 					const lineStats = truncateToWidth(
-						statsParts.join(dim(" │ ")) + compactionWarning,
+						statsParts.join(dim(" │ ")),
 						width,
 						dim("…"),
 					);
