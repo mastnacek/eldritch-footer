@@ -48,9 +48,49 @@ interface KimiUsages {
 	}>;
 }
 let kimiUsages: KimiUsages | null = null;
-let kimiFetchedAt = 0;
-let kimiFetchInFlight = false;
-const KIMI_QUOTA_TTL_MS = 60_000;
+
+const BASE_QUOTA_TTL_MS = 60_000;
+const MAX_QUOTA_TTL_MS = 600_000;
+
+interface ProviderPollState {
+	fetchedAt: number;
+	inFlight: boolean;
+	consecutiveErrors: number;
+	lastLatencyMs: number;
+	currentTtlMs: number;
+}
+
+const kimiPollState: ProviderPollState = {
+	fetchedAt: 0,
+	inFlight: false,
+	consecutiveErrors: 0,
+	lastLatencyMs: 0,
+	currentTtlMs: BASE_QUOTA_TTL_MS,
+};
+
+const zaiPollState: ProviderPollState = {
+	fetchedAt: 0,
+	inFlight: false,
+	consecutiveErrors: 0,
+	lastLatencyMs: 0,
+	currentTtlMs: BASE_QUOTA_TTL_MS,
+};
+
+function computeBackoffTtl(state: ProviderPollState, isExhausted: boolean): number {
+	if (state.consecutiveErrors > 0) {
+		return Math.min(
+			MAX_QUOTA_TTL_MS,
+			BASE_QUOTA_TTL_MS * Math.pow(2, Math.min(state.consecutiveErrors, 4)),
+		);
+	}
+	if (isExhausted) {
+		return Math.min(MAX_QUOTA_TTL_MS, BASE_QUOTA_TTL_MS * 3);
+	}
+	if (state.lastLatencyMs > 4000) {
+		return Math.min(MAX_QUOTA_TTL_MS, BASE_QUOTA_TTL_MS * 2);
+	}
+	return BASE_QUOTA_TTL_MS;
+}
 
 function readKimiApiKey(): string | undefined {
 	try {
@@ -104,9 +144,6 @@ interface ZaiQuota {
 	level?: string; // plán (pro, max, ...)
 }
 let zaiQuota: ZaiQuota | null = null;
-let zaiFetchedAt = 0;
-let zaiFetchInFlight = false;
-const ZAI_QUOTA_TTL_MS = 60_000;
 
 function readZaiApiKey(): { key: string; host: string } | undefined {
 	try {
@@ -238,36 +275,60 @@ export default function (pi: ExtensionAPI) {
 	pi.on("tool_execution_end", rerender);
 
 	async function refreshKimiQuota(force = false): Promise<void> {
-		if (kimiFetchInFlight) return;
-		if (!force && Date.now() - kimiFetchedAt < KIMI_QUOTA_TTL_MS) return;
+		if (kimiPollState.inFlight) return;
+		if (force) {
+			kimiPollState.consecutiveErrors = 0;
+			kimiPollState.currentTtlMs = BASE_QUOTA_TTL_MS;
+		} else if (Date.now() - kimiPollState.fetchedAt < kimiPollState.currentTtlMs) {
+			return;
+		}
 		const key = readKimiApiKey();
 		if (!key) return;
-		kimiFetchInFlight = true;
+		kimiPollState.inFlight = true;
+		const t0 = Date.now();
 		try {
 			const res = await fetch("https://api.kimi.com/coding/v1/usages", {
 				headers: { authorization: `Bearer ${key}` },
 				signal: AbortSignal.timeout(8000),
 			});
+			kimiPollState.lastLatencyMs = Date.now() - t0;
 			if (res.ok) {
 				kimiUsages = (await res.json()) as KimiUsages;
-				kimiFetchedAt = Date.now();
+				kimiPollState.fetchedAt = Date.now();
+				kimiPollState.consecutiveErrors = 0;
+				const used = Number(kimiUsages.usage?.used ?? 0);
+				const limit = Number(kimiUsages.usage?.limit ?? 0);
+				const isExhausted = limit > 0 && used >= limit;
+				kimiPollState.currentTtlMs = computeBackoffTtl(kimiPollState, isExhausted);
 				rerender();
+			} else {
+				kimiPollState.consecutiveErrors++;
+				kimiPollState.currentTtlMs = computeBackoffTtl(kimiPollState, false);
 			}
 		} catch {
-			/* network/auth failure: keep stale data */
+			/* network/auth failure: exponential backoff */
+			kimiPollState.consecutiveErrors++;
+			kimiPollState.lastLatencyMs = Date.now() - t0;
+			kimiPollState.currentTtlMs = computeBackoffTtl(kimiPollState, false);
 		} finally {
-			kimiFetchInFlight = false;
+			kimiPollState.inFlight = false;
 		}
 	}
 
 	pi.on("turn_end", () => void refreshKimiQuota());
 
 	async function refreshZaiQuota(force = false): Promise<void> {
-		if (zaiFetchInFlight) return;
-		if (!force && Date.now() - zaiFetchedAt < ZAI_QUOTA_TTL_MS) return;
+		if (zaiPollState.inFlight) return;
+		if (force) {
+			zaiPollState.consecutiveErrors = 0;
+			zaiPollState.currentTtlMs = BASE_QUOTA_TTL_MS;
+		} else if (Date.now() - zaiPollState.fetchedAt < zaiPollState.currentTtlMs) {
+			return;
+		}
 		const creds = readZaiApiKey();
 		if (!creds) return;
-		zaiFetchInFlight = true;
+		zaiPollState.inFlight = true;
+		const t0 = Date.now();
 		try {
 			const res = await fetch(`${creds.host}/api/monitor/usage/quota/limit`, {
 				headers: {
@@ -276,16 +337,28 @@ export default function (pi: ExtensionAPI) {
 				},
 				signal: AbortSignal.timeout(8000),
 			});
+			zaiPollState.lastLatencyMs = Date.now() - t0;
 			if (res.ok) {
 				const body = (await res.json()) as { data?: ZaiQuota };
 				zaiQuota = body?.data ?? null;
-				zaiFetchedAt = Date.now();
+				zaiPollState.fetchedAt = Date.now();
+				zaiPollState.consecutiveErrors = 0;
+				const isExhausted = Boolean(
+					zaiQuota?.limits?.some((l) => (l.percentage ?? 0) >= 100),
+				);
+				zaiPollState.currentTtlMs = computeBackoffTtl(zaiPollState, isExhausted);
 				rerender();
+			} else {
+				zaiPollState.consecutiveErrors++;
+				zaiPollState.currentTtlMs = computeBackoffTtl(zaiPollState, false);
 			}
 		} catch {
-			/* network/auth failure: keep stale data */
+			/* network/auth failure: exponential backoff */
+			zaiPollState.consecutiveErrors++;
+			zaiPollState.lastLatencyMs = Date.now() - t0;
+			zaiPollState.currentTtlMs = computeBackoffTtl(zaiPollState, false);
 		} finally {
-			zaiFetchInFlight = false;
+			zaiPollState.inFlight = false;
 		}
 	}
 
@@ -364,11 +437,16 @@ export default function (pi: ExtensionAPI) {
 					const usage = ctx.getContextUsage();
 					const contextWindow = usage?.contextWindow ?? model?.contextWindow ?? 0;
 					const percentValue = usage?.percent ?? null;
-					const ctxColor: ThemeColor =
-						percentValue !== null && percentValue > 90
-							? "error"
-							: percentValue !== null && percentValue > 70
-								? "warning"
+					const isNearCompaction = percentValue !== null && percentValue >= 80;
+					const isImminentCompaction =
+						percentValue !== null && percentValue >= 90;
+
+					const ctxColor: ThemeColor = isImminentCompaction
+						? "error"
+						: isNearCompaction
+							? "warning"
+							: percentValue !== null && percentValue > 60
+								? "accent"
 								: "success";
 
 					const dim = (s: string) => theme.fg("dim", s);
@@ -448,12 +526,20 @@ export default function (pi: ExtensionAPI) {
 					const bar = theme.fg(ctxColor, contextBar(percentValue, barW));
 					const pct = percentValue === null ? "?" : `${percentValue.toFixed(1)}%`;
 					const autoStr = isAutoCompactEnabled(ctx.cwd) ? dim(" (auto)") : "";
+					let compactionWarning = "";
+					if (isImminentCompaction) {
+						compactionWarning = " " + theme.fg("error", "⚠️ [KOMPAKCE BLÍZKO]");
+					} else if (isNearCompaction) {
+						compactionWarning = " " + theme.fg("warning", "⚡ [80%+ zaplnění]");
+					}
+
 					const lineC = truncateToWidth(
 						dim("kontext ") +
 							bar +
 							" " +
 							theme.fg(ctxColor, `${pct}/${formatTokens(contextWindow)}`) +
-							autoStr,
+							autoStr +
+							compactionWarning,
 						width,
 						dim("…"),
 					);
