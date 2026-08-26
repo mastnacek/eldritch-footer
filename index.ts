@@ -40,10 +40,8 @@ interface GitStatus {
 	behind: number;
 }
 let cachedGitStatus: GitStatus = { dirty: false, ahead: 0, behind: 0 };
-let gitCacheCwd = "";
 
 function refreshGitStatus(cwd: string): void {
-	gitCacheCwd = cwd;
 	try {
 		const s = execSync("git status --porcelain=v1 --branch", {
 			cwd,
@@ -51,7 +49,10 @@ function refreshGitStatus(cwd: string): void {
 			stdio: ["pipe", "pipe", "pipe"],
 		}).toString();
 		const first = s.split("\n")[0] ?? "";
-		const dirty = s.split("\n").slice(1).some((l) => l.length > 0);
+		const dirty = s
+			.split("\n")
+			.slice(1)
+			.some((l) => l.length > 0);
 		const aheadMatch = first.match(/\+(\d+)/);
 		const behindMatch = first.match(/-(\d+)/);
 		cachedGitStatus = {
@@ -418,10 +419,10 @@ export default function (pi: ExtensionAPI) {
 
 		ctx.ui.setFooter((tui, theme: Theme, footerData: FooterData) => {
 			requestRender = () => tui.requestRender();
-				const unsubBranch = footerData.onBranchChange(() => {
-					refreshGitStatus(ctx.cwd);
-					tui.requestRender();
-				});
+			const unsubBranch = footerData.onBranchChange(() => {
+				refreshGitStatus(ctx.cwd);
+				tui.requestRender();
+			});
 
 			return {
 				dispose: () => {
@@ -511,8 +512,6 @@ export default function (pi: ExtensionAPI) {
 						return truncateToWidth(left, width, theme.fg("dim", "…"));
 					};
 
-
-
 					// ---- line A: location only (left-aligned) ----
 					const locParts = [theme.fg("muted", `📁 ${formatCwd(sm.getCwd())}`)];
 					const branch = footerData.getGitBranch();
@@ -520,9 +519,10 @@ export default function (pi: ExtensionAPI) {
 						const gs = cachedGitStatus;
 						const dirtyIcon = gs.dirty ? "●" : "○";
 						const dirtyColor: ThemeColor = gs.dirty ? "warning" : "success";
-						let branchStr = `🌿 ${branch} ${theme.fg(dirtyColor, dirtyIcon)}`;
-						if (gs.ahead > 0) branchStr += dim(` ▸${gs.ahead}`);
-						if (gs.behind > 0) branchStr += dim(` ◂${gs.behind}`);
+						const dirtyLabel = gs.dirty ? "dirty" : "clean";
+						let branchStr = `🌿 ${branch} ${theme.fg(dirtyColor, `${dirtyIcon} ${dim(dirtyLabel)}`)}`;
+						if (gs.ahead > 0) branchStr += dim(` ▸${gs.ahead} ahead`);
+						if (gs.behind > 0) branchStr += dim(` ◂${gs.behind} behind`);
 						locParts.push(theme.fg("success", branchStr));
 					}
 					const sessionName = sm.getSessionName();
@@ -583,7 +583,7 @@ export default function (pi: ExtensionAPI) {
 						const level = pi.getThinkingLevel() || "off";
 						const token = THINKING_TOKEN[level] ?? "thinkingOff";
 						modelStr +=
-							dim(" • ") + theme.fg(token, level === "off" ? "thinking off" : level);
+							dim(" • 🧠 ") + theme.fg(token, level === "off" ? "thinking off" : level);
 					}
 					if (model && footerData.getAvailableProviderCount() > 1) {
 						modelStr = dim(`(${model.provider}) `) + modelStr;
