@@ -75,11 +75,14 @@ const zaiPollState: ProviderPollState = {
 	currentTtlMs: BASE_QUOTA_TTL_MS,
 };
 
-function computeBackoffTtl(state: ProviderPollState, isExhausted: boolean): number {
+function computeBackoffTtl(
+	state: ProviderPollState,
+	isExhausted: boolean,
+): number {
 	if (state.consecutiveErrors > 0) {
 		return Math.min(
 			MAX_QUOTA_TTL_MS,
-			BASE_QUOTA_TTL_MS * Math.pow(2, Math.min(state.consecutiveErrors, 4)),
+			BASE_QUOTA_TTL_MS * 2 ** Math.min(state.consecutiveErrors, 4),
 		);
 	}
 	if (isExhausted) {
@@ -278,7 +281,10 @@ export default function (pi: ExtensionAPI) {
 		if (force) {
 			kimiPollState.consecutiveErrors = 0;
 			kimiPollState.currentTtlMs = BASE_QUOTA_TTL_MS;
-		} else if (Date.now() - kimiPollState.fetchedAt < kimiPollState.currentTtlMs) {
+		} else if (
+			Date.now() - kimiPollState.fetchedAt <
+			kimiPollState.currentTtlMs
+		) {
 			return;
 		}
 		const key = readKimiApiKey();
@@ -437,8 +443,7 @@ export default function (pi: ExtensionAPI) {
 					const contextWindow = usage?.contextWindow ?? model?.contextWindow ?? 0;
 					const percentValue = usage?.percent ?? null;
 					const isNearCompaction = percentValue !== null && percentValue >= 80;
-					const isImminentCompaction =
-						percentValue !== null && percentValue >= 90;
+					const isImminentCompaction = percentValue !== null && percentValue >= 90;
 
 					const ctxColor: ThemeColor = isImminentCompaction
 						? "error"
