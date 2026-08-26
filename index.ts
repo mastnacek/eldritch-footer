@@ -221,6 +221,16 @@ const THINKING_TOKEN: Record<string, ThemeColor> = {
 	max: "thinkingMax",
 };
 
+const THINKING_EMOJI: Record<string, string> = {
+	off: "💤",
+	minimal: "🔹",
+	low: "🧊",
+	medium: "⚡",
+	high: "🧠",
+	xhigh: "🔥",
+	max: "🌋",
+};
+
 function formatTokens(count: number): string {
 	if (count < 1000) return count.toString();
 	if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
@@ -582,8 +592,10 @@ export default function (pi: ExtensionAPI) {
 					if (model?.reasoning) {
 						const level = pi.getThinkingLevel() || "off";
 						const token = THINKING_TOKEN[level] ?? "thinkingOff";
+						const emoji = THINKING_EMOJI[level] ?? "🧠";
 						modelStr +=
-							dim(" • 🧠 ") + theme.fg(token, level === "off" ? "thinking off" : level);
+							dim(` • ${emoji} `) +
+							theme.fg(token, level === "off" ? "thinking off" : level);
 					}
 					if (model && footerData.getAvailableProviderCount() > 1) {
 						modelStr = dim(`(${model.provider}) `) + modelStr;
