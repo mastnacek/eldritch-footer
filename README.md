@@ -11,14 +11,14 @@ so it can be toggled with a parametrized command — just like
 ## What it shows
 
 ```
-~/.pi/agent │ ⎇ main │ ● session-name
-vstup ↑12k · výstup ↓3k · cache 8k · cache-hity 95.0% · cena $0.012 · kontext ██░░░░ 23.0%/200k (auto)    glm-5.2 • high
-z.ai · 5h okno ██░░░░░░░░ 18% (reset 30.7. 03:00) · týden █░░░░░░░░░ 9% (reset 4.8. 18:11) · hledání 3/200
+📁 ~/.pi/agent │ 🌿 main │ 🏷️ session-name                    glm-5.2 • high
+📊 ██░░░░ 23.0%/200k (auto) │ 💰 $0.012 │ ⬆️ 12k ⬇️ 3k │ 📦 8k 🎯95%
+z.ai · 5h okno ██░░░░░░░░ 18% (reset 30.7. 03:00) │ týden █░░░░░░░░░ 9%
 prompt-translate input on · …
 ```
 
-- **Line 1** — cwd (`~`-shortened) · git branch · session name
-- **Line 2** — token stats (Czech labels), cost, context-progress bar + window, model + thinking level
+- **Line 1** — 📁 cwd (`~`-shortened) · 🌿 git branch · 🏷️ session name … model · thinking
+- **Line 2** — 📊 context bar + window · 💰 cost · ⬆️ input ⬇️ output · 📦 cache (🎯 hit%)
 - **Line 3** — provider quota meters (only for the active provider):
   - **Kimi** (`kimi-coding`) — `týden` + `5h okno` with used/limit, remaining, reset time
   - **Z.ai / GLM** (`zai-coding` / `zai-coding-cn`) — `5h okno` + `týden` percentages + monthly web-search count
