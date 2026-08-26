@@ -2,12 +2,11 @@
  * Eldritch Footer — installable Pi package.
  *
  * Custom footer/statusline replacing the built-in one:
- *   Line 1: cwd (~-shortened) | git branch | session name ...... (provider) model • thinking
- *   Line 2: usage — ↑input ↓output cache cache-hit% $cost
- *   Line 3: context hero bar — % / window (auto-compact flag)
- *   Line 4: Kimi quota (týden · 5h okno)           — when provider is kimi-coding
+ *   Line 1: 📁 cwd (~shortened) │ 🌿 git branch │ 🏷️ session ...... (provider) model • thinking
+ *   Line 2: 📊 context bar % / window │ 💰 cost │ ⬆️ input ⬇️ output │ 📦 cache (hit%)
+ *   Line 3: Kimi quota (týden · 5h okno)           — when provider is kimi-coding
  *           Z.ai/GLM quota (5h okno · týden · hledání) — when provider is zai-coding(-cn)
- *   Line 5: extension statuses (from ctx.ui.setStatus)
+ *   Line 4: extension statuses (from ctx.ui.setStatus)
  *
  * Quota meters are polled from the providers' internal usage endpoints:
  *   - Kimi:  GET https://api.kimi.com/coding/v1/usages
@@ -470,12 +469,12 @@ export default function (pi: ExtensionAPI) {
 					};
 
 					// ---- line A: location (left) + (provider) model • thinking (right) ----
-					const locParts = [theme.fg("accent", formatCwd(sm.getCwd()))];
+					const locParts = [theme.fg("accent", `📁 ${formatCwd(sm.getCwd())}`)];
 					const branch = footerData.getGitBranch();
-					if (branch) locParts.push(theme.fg("success", `⎇ ${branch}`));
+					if (branch) locParts.push(theme.fg("success", `🌿 ${branch}`));
 					const sessionName = sm.getSessionName();
 					if (sessionName)
-						locParts.push(theme.fg("customMessageLabel", `● ${sessionName}`));
+						locParts.push(theme.fg("customMessageLabel", `🏷️ ${sessionName}`));
 					const locLeft = locParts.join(sep);
 
 					let right = `${theme.fg("accent", model?.id || "no-model")}`;
@@ -490,38 +489,7 @@ export default function (pi: ExtensionAPI) {
 					}
 					const lineA = fitLR(locLeft, right);
 
-					// ---- line B: usage stats (session amount — always visible, updates live) ----
-					const stats: string[] = [];
-					stats.push(theme.fg("mdLink", `↑ ${formatTokens(input)}`));
-					stats.push(theme.fg("success", `↓ ${formatTokens(output)}`));
-					if (cacheRead || cacheWrite) {
-						stats.push(theme.fg("muted", `cache ${formatTokens(cacheRead)}`));
-						if (cacheWrite)
-							stats.push(theme.fg("muted", `zapis ${formatTokens(cacheWrite)}`));
-					}
-					if (
-						(cacheRead > 0 || cacheWrite > 0) &&
-						latestCacheHitRate !== undefined
-					) {
-						stats.push(theme.fg("accent", `hity ${latestCacheHitRate.toFixed(0)}%`));
-					}
-					// kimi-coding is subscription-backed (same special-case as built-in footer)
-					const usingSubscription = model?.provider === "kimi-coding";
-					// Session cost always shown — even $0 at session start — so the
-					// "session amount" never silently disappears.
-					stats.push(
-						theme.fg(
-							"warning",
-							`cena $${formatCost(cost)}${usingSubscription ? dim(" (sub)") : ""}`,
-						),
-					);
-					const lineB = truncateToWidth(
-						stats.join(sep),
-						width,
-						theme.fg("dim", "…"),
-					);
-
-					// ---- line C: context hero bar (compaction signal) ----
+					// ---- line BC: context + cost + usage stats (single line) ----
 					const barW = Math.max(10, Math.min(22, Math.floor(width * 0.22)));
 					const bar = theme.fg(ctxColor, contextBar(percentValue, barW));
 					const pct = percentValue === null ? "?" : `${percentValue.toFixed(1)}%`;
@@ -533,18 +501,46 @@ export default function (pi: ExtensionAPI) {
 						compactionWarning = " " + theme.fg("warning", "⚡ [80%+ zaplnění]");
 					}
 
-					const lineC = truncateToWidth(
-						dim("kontext ") +
+					// kimi-coding is subscription-backed
+					const usingSubscription = model?.provider === "kimi-coding";
+
+					const statsParts: string[] = [];
+					// 📊 context segment
+					statsParts.push(
+						dim("📊 ") +
 							bar +
 							" " +
 							theme.fg(ctxColor, `${pct}/${formatTokens(contextWindow)}`) +
-							autoStr +
-							compactionWarning,
+							autoStr,
+					);
+					// 💰 cost segment
+					statsParts.push(
+						theme.fg("warning", `💰 $${formatCost(cost)}`) +
+							(usingSubscription ? dim(" (sub)") : ""),
+					);
+					// ⬆️⬇️ token stats
+					statsParts.push(theme.fg("mdLink", `⬆️ ${formatTokens(input)}`));
+					statsParts.push(theme.fg("success", `⬇️ ${formatTokens(output)}`));
+					// 📦 cache segment
+					if (cacheRead || cacheWrite) {
+						let cacheStr = `📦 ${formatTokens(cacheRead)}`;
+						if (cacheWrite) cacheStr += ` (w:${formatTokens(cacheWrite)})`;
+						if (
+							(cacheRead > 0 || cacheWrite > 0) &&
+							latestCacheHitRate !== undefined
+						) {
+							cacheStr += ` 🎯${latestCacheHitRate.toFixed(0)}%`;
+						}
+						statsParts.push(theme.fg("muted", cacheStr));
+					}
+
+					const lineStats = truncateToWidth(
+						statsParts.join(dim(" │ ")) + compactionWarning,
 						width,
 						dim("…"),
 					);
 
-					const lines = ["", lineA, lineB, lineC];
+					const lines = ["", lineA, lineStats];
 
 					// ---- line D: vendor quota meter ----
 					let quotaLine: string | undefined;
