@@ -644,7 +644,8 @@ export default function (pi: ExtensionAPI) {
 			return items.length > 0 ? items : null;
 		},
 		handler: async (args, ctx) => {
-			const [sub] = args.trim().split(/\s+/).filter(Boolean);
+			const [subRaw] = args.trim().split(/\s+/).filter(Boolean);
+			const sub = subRaw?.toLowerCase();
 			if (sub === "status") {
 				ctx.ui.notify(statusText(), "info");
 				return;
