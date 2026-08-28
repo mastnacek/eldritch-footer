@@ -716,27 +716,19 @@ export default function (pi: ExtensionAPI) {
 						.map(([, t]) => clean(t))
 						.filter(Boolean);
 					if (rest.length > 0) {
-						// greedy fit: přidávej statusy dokud se vejdou, zbytek jako "+N more"
+						// Wrap extension statuses across multiple lines
 						const sepExt = theme.fg("dim", " │ ");
-						let acc = "";
-						let used = 0;
+						let currentLine = "";
 						for (const s of rest) {
-							const candidate = acc ? acc + sepExt + s : s;
+							const candidate = currentLine ? currentLine + sepExt + s : s;
 							if (visibleWidth(candidate) <= width) {
-								acc = candidate;
-								used++;
-							} else break;
+								currentLine = candidate;
+							} else {
+								if (currentLine) lines.push(currentLine);
+								currentLine = truncateToWidth(s, width, theme.fg("dim", "…"));
+							}
 						}
-						if (used === 0) {
-							acc = truncateToWidth(rest[0], width, theme.fg("dim", "…"));
-							used = 1;
-						}
-						if (used < rest.length) {
-							acc += sepExt + dim(`+${rest.length - used} more`);
-							if (visibleWidth(acc) > width)
-								acc = truncateToWidth(acc, width, theme.fg("dim", "…"));
-						}
-						lines.push(acc);
+						if (currentLine) lines.push(currentLine);
 					}
 
 					return lines;
