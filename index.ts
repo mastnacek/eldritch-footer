@@ -659,9 +659,7 @@ export default function (pi: ExtensionAPI) {
 						].find((k) => statuses.has(k) && Boolean(statuses.get(k)));
 						const rawSubagent = subagentKey ? statuses.get(subagentKey) : undefined;
 						if (rawSubagent) {
-							rightParts.push(
-								theme.fg("accent", `🤖 ${clean(rawSubagent)}`),
-							);
+							rightParts.push(theme.fg("accent", `🤖 ${clean(rawSubagent)}`));
 						}
 
 						// 4. SPAI task ledger
