@@ -53,7 +53,7 @@ const GLOBAL_CONFIG_PATH = join(
 
 const DEFAULT_CONFIG: FooterConfig = {
 	enabled: true,
-	preset: "minimal",
+	preset: "compact",
 };
 
 let currentConfig: FooterConfig = { ...DEFAULT_CONFIG };
@@ -338,6 +338,12 @@ function formatCost(cost: number): string {
 	return cost.toFixed(2);
 }
 
+function formatCwdShort(cwd: string): string {
+	const rCwd = resolve(cwd);
+	const parts = rCwd.split(/[\\/]/).filter(Boolean);
+	return parts.at(-1) || cwd;
+}
+
 function formatCwd(cwd: string): string {
 	const home = process.env.HOME || process.env.USERPROFILE;
 	if (!home) return cwd;
@@ -604,13 +610,25 @@ export default function (pi: ExtensionAPI) {
 							.trim();
 
 					// -------------------------------------------------------------
-					// Preset 1: "minimal" (1 single line with only essential operational data)
+					// Preset 1: "minimal" (1 single line with location, git & essential data)
 					// -------------------------------------------------------------
 					if (currentConfig.preset === "minimal") {
 						const parts: string[] = [];
 
+						// 0. Location & Git branch (compact)
+						const repoName = formatCwdShort(sm.getCwd());
+						const branch = footerData.getGitBranch();
+						let locStr = `📁 ${repoName}`;
+						if (branch) {
+							const gs = cachedGitStatus;
+							const dirtyIcon = gs.dirty ? "●" : "○";
+							const dirtyColor: ThemeColor = gs.dirty ? "warning" : "success";
+							locStr += ` 🌿 ${branch} ${theme.fg(dirtyColor, dirtyIcon)}`;
+						}
+						parts.push(theme.fg("muted", locStr));
+
 						// 1. Context meter & progress bar
-						const barW = Math.max(6, Math.min(10, Math.floor(width * 0.1)));
+						const barW = Math.max(6, Math.min(8, Math.floor(width * 0.08)));
 						const bar = theme.fg(ctxColor, contextBar(percentValue, barW));
 						const pct = percentValue === null ? "?" : `${percentValue.toFixed(0)}%`;
 						parts.push(
@@ -627,8 +645,7 @@ export default function (pi: ExtensionAPI) {
 							const emoji = THINKING_EMOJI[level] ?? "🧠";
 							const token = THINKING_TOKEN[level] ?? "thinkingOff";
 							modelStr +=
-								dim(` • ${emoji} `) +
-								theme.fg(token, level === "off" ? "off" : level);
+								dim(` • ${emoji} `) + theme.fg(token, level === "off" ? "off" : level);
 						}
 						if (model && footerData.getAvailableProviderCount() > 1) {
 							modelStr = dim(`(${model.provider}) `) + modelStr;
@@ -705,8 +722,7 @@ export default function (pi: ExtensionAPI) {
 							const emoji = THINKING_EMOJI[level] ?? "🧠";
 							const token = THINKING_TOKEN[level] ?? "thinkingOff";
 							modelStr +=
-								dim(` • ${emoji} `) +
-								theme.fg(token, level === "off" ? "off" : level);
+								dim(` • ${emoji} `) + theme.fg(token, level === "off" ? "off" : level);
 						}
 						if (model && footerData.getAvailableProviderCount() > 1) {
 							modelStr = dim(`(${model.provider}) `) + modelStr;
@@ -1032,8 +1048,7 @@ export default function (pi: ExtensionAPI) {
 						{
 							value: "preset full",
 							label: "preset full",
-							description:
-								"Plný víceřádkový detailní režim (kvóty, tokeny, cache)",
+							description: "Plný víceřádkový detailní režim (kvóty, tokeny, cache)",
 						},
 					];
 					const filtered = presets.filter((i) =>
@@ -1091,9 +1106,7 @@ export default function (pi: ExtensionAPI) {
 				subcommand === "-h" ||
 				subcommand === "--help"
 			) {
-				const kimi = readKimiApiKey()
-					? "nastaven (API klíč / OAuth)"
-					: "nenalezen";
+				const kimi = readKimiApiKey() ? "nastaven (API klíč / OAuth)" : "nenalezen";
 				const zai = readZaiApiKey() ? "nastaven (API klíč)" : "nenalezen";
 				const helpText = [
 					`# eldritch-footer — stav: ${currentConfig.enabled ? "ZAPNUTO (ON)" : "VYPNUTO (OFF)"} | režim: ${currentConfig.preset.toUpperCase()}`,
