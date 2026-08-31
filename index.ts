@@ -338,12 +338,6 @@ function formatCost(cost: number): string {
 	return cost.toFixed(2);
 }
 
-function formatCwdShort(cwd: string): string {
-	const rCwd = resolve(cwd);
-	const parts = rCwd.split(/[\\/]/).filter(Boolean);
-	return parts.at(-1) || cwd;
-}
-
 function formatCwd(cwd: string): string {
 	const home = process.env.HOME || process.env.USERPROFILE;
 	if (!home) return cwd;
@@ -610,28 +604,31 @@ export default function (pi: ExtensionAPI) {
 							.trim();
 
 					// -------------------------------------------------------------
-					// Preset 1: "minimal" (1 single line with location, git & essential data)
+					// Preset 1: "minimal" (1 single line with full path, git & essential data)
 					// -------------------------------------------------------------
 					if (currentConfig.preset === "minimal") {
-						const parts: string[] = [];
-
-						// 0. Location & Git branch (compact)
-						const repoName = formatCwdShort(sm.getCwd());
+						// Left side: full path + git branch & status
+						const loc = formatCwd(sm.getCwd());
 						const branch = footerData.getGitBranch();
-						let locStr = `📁 ${repoName}`;
+						let locStr = `📁 ${loc}`;
 						if (branch) {
 							const gs = cachedGitStatus;
 							const dirtyIcon = gs.dirty ? "●" : "○";
 							const dirtyColor: ThemeColor = gs.dirty ? "warning" : "success";
 							locStr += ` 🌿 ${branch} ${theme.fg(dirtyColor, dirtyIcon)}`;
+							if (gs.ahead > 0) locStr += dim(` ▸${gs.ahead}`);
+							if (gs.behind > 0) locStr += dim(` ◂${gs.behind}`);
 						}
-						parts.push(theme.fg("muted", locStr));
+						const left = theme.fg("muted", locStr);
+
+						// Right side: context meter, model, subagents, SPAI, ADR, active LSP
+						const rightParts: string[] = [];
 
 						// 1. Context meter & progress bar
 						const barW = Math.max(6, Math.min(8, Math.floor(width * 0.08)));
 						const bar = theme.fg(ctxColor, contextBar(percentValue, barW));
 						const pct = percentValue === null ? "?" : `${percentValue.toFixed(0)}%`;
-						parts.push(
+						rightParts.push(
 							dim("📊 ") +
 								bar +
 								" " +
@@ -650,7 +647,7 @@ export default function (pi: ExtensionAPI) {
 						if (model && footerData.getAvailableProviderCount() > 1) {
 							modelStr = dim(`(${model.provider}) `) + modelStr;
 						}
-						parts.push(modelStr);
+						rightParts.push(modelStr);
 
 						// 3. Subagent activity (if active)
 						const subagentKey = [
@@ -660,40 +657,39 @@ export default function (pi: ExtensionAPI) {
 							"apple-rada",
 							"pi-council",
 						].find((k) => statuses.has(k) && Boolean(statuses.get(k)));
-						if (subagentKey) {
-							parts.push(
-								theme.fg("accent", `🤖 ${clean(statuses.get(subagentKey)!)}`),
+						const rawSubagent = subagentKey ? statuses.get(subagentKey) : undefined;
+						if (rawSubagent) {
+							rightParts.push(
+								theme.fg("accent", `🤖 ${clean(rawSubagent)}`),
 							);
 						}
 
 						// 4. SPAI task ledger
 						const spai = statuses.get("pi-spai");
 						if (spai) {
-							parts.push(clean(spai));
+							rightParts.push(clean(spai));
 						}
 
 						// 5. ADR doctrine
 						const adr = statuses.get("pi-solo-radar");
 						if (adr) {
-							parts.push(clean(adr));
+							rightParts.push(clean(adr));
 						}
 
 						// 6. LSP (auto-shows when active and not "LSP Inactive")
 						const lspKey = ["lsp", "pi-lsp", "lotusscript_lsp"].find(
 							(k) => statuses.has(k) && Boolean(statuses.get(k)),
 						);
-						if (lspKey) {
-							const lspVal = clean(statuses.get(lspKey)!);
+						const rawLsp = lspKey ? statuses.get(lspKey) : undefined;
+						if (rawLsp) {
+							const lspVal = clean(rawLsp);
 							if (!/inactive/i.test(lspVal)) {
-								parts.push(lspVal);
+								rightParts.push(lspVal);
 							}
 						}
 
-						const singleLine = truncateToWidth(
-							parts.join(sep),
-							width,
-							theme.fg("dim", "…"),
-						);
+						const right = rightParts.join(sep);
+						const singleLine = fitLR(left, right);
 						return ["", singleLine];
 					}
 
@@ -753,8 +749,9 @@ export default function (pi: ExtensionAPI) {
 						const lspKey = ["lsp", "pi-lsp", "lotusscript_lsp"].find(
 							(k) => statuses.has(k) && Boolean(statuses.get(k)),
 						);
-						if (lspKey) {
-							const lspVal = clean(statuses.get(lspKey)!);
+						const rawLsp = lspKey ? statuses.get(lspKey) : undefined;
+						if (rawLsp) {
+							const lspVal = clean(rawLsp);
 							if (!/inactive/i.test(lspVal)) {
 								line2Parts.push(lspVal);
 							}
