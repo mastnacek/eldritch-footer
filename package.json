@@ -37,5 +37,9 @@
   },
   "bugs": {
     "url": "https://github.com/mastnacek/eldritch-footer/issues"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.0",
+    "typescript": "^7.0.2"
   }
 }

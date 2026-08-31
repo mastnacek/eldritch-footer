@@ -25,13 +25,105 @@ import type {
 	ExtensionContext,
 	ThemeColor,
 } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import {
+	truncateToWidth,
+	visibleWidth,
+	type AutocompleteItem,
+} from "@earendil-works/pi-tui";
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 
 const CONFIG_ENTRY_TYPE = "eldritch-footer-config";
+
+export type FooterPreset = "minimal" | "compact" | "full";
+
+export interface FooterConfig {
+	enabled: boolean;
+	preset: FooterPreset;
+}
+
+const GLOBAL_CONFIG_PATH = join(
+	homedir(),
+	".pi",
+	"agent",
+	"eldritch-footer.json",
+);
+
+const DEFAULT_CONFIG: FooterConfig = {
+	enabled: true,
+	preset: "minimal",
+};
+
+let currentConfig: FooterConfig = { ...DEFAULT_CONFIG };
+
+function loadGlobalConfig(): Partial<FooterConfig> {
+	try {
+		if (existsSync(GLOBAL_CONFIG_PATH)) {
+			return JSON.parse(
+				readFileSync(GLOBAL_CONFIG_PATH, "utf8"),
+			) as Partial<FooterConfig>;
+		}
+	} catch {
+		/* ignore */
+	}
+	return {};
+}
+
+function saveGlobalConfig(config: FooterConfig): void {
+	try {
+		mkdirSync(dirname(GLOBAL_CONFIG_PATH), { recursive: true });
+		writeFileSync(GLOBAL_CONFIG_PATH, JSON.stringify(config, null, 2), "utf8");
+	} catch {
+		/* ignore */
+	}
+}
+
+function clearGlobalConfig(): void {
+	try {
+		if (existsSync(GLOBAL_CONFIG_PATH)) {
+			writeFileSync(
+				GLOBAL_CONFIG_PATH,
+				JSON.stringify(DEFAULT_CONFIG, null, 2),
+				"utf8",
+			);
+		}
+	} catch {
+		/* ignore */
+	}
+}
+
+function extractConfig(ctx: ExtensionContext): FooterConfig {
+	const globalCfg = loadGlobalConfig();
+	let sessionCfg: Partial<FooterConfig> | null = null;
+	for (const entry of ctx.sessionManager.getEntries()) {
+		if (
+			entry.type === "custom" &&
+			entry.customType === CONFIG_ENTRY_TYPE &&
+			entry.data &&
+			typeof entry.data === "object"
+		) {
+			sessionCfg = entry.data as Partial<FooterConfig>;
+		}
+	}
+	return {
+		enabled:
+			typeof sessionCfg?.enabled === "boolean"
+				? sessionCfg.enabled
+				: typeof globalCfg.enabled === "boolean"
+					? globalCfg.enabled
+					: DEFAULT_CONFIG.enabled,
+		preset:
+			sessionCfg?.preset &&
+			["minimal", "compact", "full"].includes(sessionCfg.preset)
+				? sessionCfg.preset
+				: globalCfg.preset &&
+						["minimal", "compact", "full"].includes(globalCfg.preset)
+					? globalCfg.preset
+					: DEFAULT_CONFIG.preset,
+	};
+}
 
 /** Git status cache — refreshed on turn_end and branch change. */
 interface GitStatus {
@@ -283,25 +375,7 @@ function contextBar(percent: number | null, width = 10): string {
 	return "█".repeat(filled) + "░".repeat(width - filled);
 }
 
-/** Read the latest persisted enabled flag from the session log. Defaults to true. */
-function extractEnabled(ctx: ExtensionContext): boolean {
-	let latest = true;
-	for (const entry of ctx.sessionManager.getEntries()) {
-		if (
-			entry.type === "custom" &&
-			entry.customType === CONFIG_ENTRY_TYPE &&
-			entry.data &&
-			typeof entry.data === "object"
-		) {
-			const v = (entry.data as { enabled?: boolean }).enabled;
-			if (typeof v === "boolean") latest = v;
-		}
-	}
-	return latest;
-}
-
 export default function (pi: ExtensionAPI) {
-	let enabled = true;
 	let requestRender: (() => void) | undefined;
 
 	const rerender = () => requestRender?.();
@@ -416,7 +490,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("turn_end", (_event, ctx) => refreshGitStatus(ctx.cwd));
 
 	function apply(ctx: ExtensionContext) {
-		if (!enabled || ctx.mode !== "tui") {
+		if (!currentConfig.enabled || ctx.mode !== "tui") {
 			ctx.ui.setFooter(undefined);
 			return;
 		}
@@ -445,7 +519,7 @@ export default function (pi: ExtensionAPI) {
 					const model = ctx.model;
 					const sm = ctx.sessionManager;
 
-					// ---- aggregate usage (mirrors built-in footer semantics) ----
+					// ---- aggregate usage ----
 					let input = 0,
 						output = 0,
 						cacheRead = 0,
@@ -505,7 +579,7 @@ export default function (pi: ExtensionAPI) {
 					const dim = (s: string) => theme.fg("dim", s);
 					const sep = dim(" │ ");
 
-					/** Fit left + right text on one line: pad with gap, else trim left (keeps right whole). */
+					/** Fit left + right text on one line */
 					const fitLR = (left: string, right: string): string => {
 						const lw = visibleWidth(left);
 						const rw = visibleWidth(right);
@@ -522,6 +596,165 @@ export default function (pi: ExtensionAPI) {
 						return truncateToWidth(left, width, theme.fg("dim", "…"));
 					};
 
+					const statuses = footerData.getExtensionStatuses() as Map<string, string>;
+					const clean = (t: string) =>
+						t
+							.replace(/[\r\n\t]+/g, " ")
+							.replace(/ +/g, " ")
+							.trim();
+
+					// -------------------------------------------------------------
+					// Preset 1: "minimal" (1 single line with only essential operational data)
+					// -------------------------------------------------------------
+					if (currentConfig.preset === "minimal") {
+						const parts: string[] = [];
+
+						// 1. Context meter & progress bar
+						const barW = Math.max(6, Math.min(10, Math.floor(width * 0.1)));
+						const bar = theme.fg(ctxColor, contextBar(percentValue, barW));
+						const pct = percentValue === null ? "?" : `${percentValue.toFixed(0)}%`;
+						parts.push(
+							dim("📊 ") +
+								bar +
+								" " +
+								theme.fg(ctxColor, `${pct}/${formatTokens(contextWindow)}`),
+						);
+
+						// 2. Active model & thinking
+						let modelStr = theme.fg("accent", model?.id || "no-model");
+						if (model?.reasoning) {
+							const level = pi.getThinkingLevel() || "off";
+							const emoji = THINKING_EMOJI[level] ?? "🧠";
+							const token = THINKING_TOKEN[level] ?? "thinkingOff";
+							modelStr +=
+								dim(` • ${emoji} `) +
+								theme.fg(token, level === "off" ? "off" : level);
+						}
+						if (model && footerData.getAvailableProviderCount() > 1) {
+							modelStr = dim(`(${model.provider}) `) + modelStr;
+						}
+						parts.push(modelStr);
+
+						// 3. Subagent activity (if active)
+						const subagentKey = [
+							"pi-subagents",
+							"subagent",
+							"fusion",
+							"apple-rada",
+							"pi-council",
+						].find((k) => statuses.has(k) && Boolean(statuses.get(k)));
+						if (subagentKey) {
+							parts.push(
+								theme.fg("accent", `🤖 ${clean(statuses.get(subagentKey)!)}`),
+							);
+						}
+
+						// 4. SPAI task ledger
+						const spai = statuses.get("pi-spai");
+						if (spai) {
+							parts.push(clean(spai));
+						}
+
+						// 5. ADR doctrine
+						const adr = statuses.get("pi-solo-radar");
+						if (adr) {
+							parts.push(clean(adr));
+						}
+
+						// 6. LSP (auto-shows when active and not "LSP Inactive")
+						const lspKey = ["lsp", "pi-lsp", "lotusscript_lsp"].find(
+							(k) => statuses.has(k) && Boolean(statuses.get(k)),
+						);
+						if (lspKey) {
+							const lspVal = clean(statuses.get(lspKey)!);
+							if (!/inactive/i.test(lspVal)) {
+								parts.push(lspVal);
+							}
+						}
+
+						const singleLine = truncateToWidth(
+							parts.join(sep),
+							width,
+							theme.fg("dim", "…"),
+						);
+						return ["", singleLine];
+					}
+
+					// -------------------------------------------------------------
+					// Preset 2: "compact" (2 balanced lines)
+					// -------------------------------------------------------------
+					if (currentConfig.preset === "compact") {
+						// Line 1: location + git + model + thinking
+						const locParts = [theme.fg("muted", `📁 ${formatCwd(sm.getCwd())}`)];
+						const branch = footerData.getGitBranch();
+						if (branch) {
+							const gs = cachedGitStatus;
+							const dirtyIcon = gs.dirty ? "●" : "○";
+							const dirtyColor: ThemeColor = gs.dirty ? "warning" : "success";
+							const dirtyLabel = gs.dirty ? "dirty" : "clean";
+							let branchStr = `🌿 ${branch} ${theme.fg(dirtyColor, `${dirtyIcon} ${dim(dirtyLabel)}`)}`;
+							if (gs.ahead > 0) branchStr += dim(` ▸${gs.ahead}`);
+							if (gs.behind > 0) branchStr += dim(` ◂${gs.behind}`);
+							locParts.push(theme.fg("success", branchStr));
+						}
+						const left1 = locParts.join(sep);
+
+						let modelStr = theme.fg("accent", model?.id || "no-model");
+						if (model?.reasoning) {
+							const level = pi.getThinkingLevel() || "off";
+							const emoji = THINKING_EMOJI[level] ?? "🧠";
+							const token = THINKING_TOKEN[level] ?? "thinkingOff";
+							modelStr +=
+								dim(` • ${emoji} `) +
+								theme.fg(token, level === "off" ? "off" : level);
+						}
+						if (model && footerData.getAvailableProviderCount() > 1) {
+							modelStr = dim(`(${model.provider}) `) + modelStr;
+						}
+						const line1 = fitLR(left1, modelStr);
+
+						// Line 2: context bar + cost + SPAI + ADR + LSP
+						const barW = Math.max(8, Math.min(16, Math.floor(width * 0.16)));
+						const bar = theme.fg(ctxColor, contextBar(percentValue, barW));
+						const pct = percentValue === null ? "?" : `${percentValue.toFixed(1)}%`;
+						const autoStr = isAutoCompactEnabled(ctx.cwd) ? dim(" (auto)") : "";
+
+						const line2Parts: string[] = [
+							dim("📊 ") +
+								bar +
+								" " +
+								theme.fg(ctxColor, `${pct}/${formatTokens(contextWindow)}`) +
+								autoStr,
+							theme.fg("warning", `💰 $${formatCost(cost)}`),
+						];
+
+						const spai = statuses.get("pi-spai");
+						if (spai) line2Parts.push(clean(spai));
+
+						const adr = statuses.get("pi-solo-radar");
+						if (adr) line2Parts.push(clean(adr));
+
+						const lspKey = ["lsp", "pi-lsp", "lotusscript_lsp"].find(
+							(k) => statuses.has(k) && Boolean(statuses.get(k)),
+						);
+						if (lspKey) {
+							const lspVal = clean(statuses.get(lspKey)!);
+							if (!/inactive/i.test(lspVal)) {
+								line2Parts.push(lspVal);
+							}
+						}
+
+						const line2 = truncateToWidth(
+							line2Parts.join(sep),
+							width,
+							theme.fg("dim", "…"),
+						);
+						return ["", line1, line2];
+					}
+
+					// -------------------------------------------------------------
+					// Preset 3: "full" (multi-line layout)
+					// -------------------------------------------------------------
 					// ---- line A: location only (left-aligned) ----
 					const locParts = [theme.fg("muted", `📁 ${formatCwd(sm.getCwd())}`)];
 					const branch = footerData.getGitBranch();
@@ -693,15 +926,7 @@ export default function (pi: ExtensionAPI) {
 					if (quotaLine) lines.push(quotaLine);
 
 					// ---- line E: translation plugin status (dedicated, unmissable) ----
-					// Surfacing the pi-prompt-translate segment (“⇄ lang • think • model • $cost • OR bal”)
-					// on its own line instead of burying it in the generic statuses dump below.
-					const statuses = footerData.getExtensionStatuses();
 					const TRANSLATE_KEY = "prompt-translate-state";
-					const clean = (t: string) =>
-						t
-							.replace(/[\r\n\t]+/g, " ")
-							.replace(/ +/g, " ")
-							.trim();
 					const translate = statuses.get(TRANSLATE_KEY);
 					if (translate) {
 						lines.push(
@@ -740,97 +965,252 @@ export default function (pi: ExtensionAPI) {
 	function statusText(): string {
 		const kimi = readKimiApiKey() ? "key" : "no-key";
 		const zai = readZaiApiKey() ? "key" : "no-key";
-		return `eldritch-footer: ${enabled ? "on" : "off"} · kimi ${kimi} · z.ai ${zai}`;
+		const globalActive = existsSync(GLOBAL_CONFIG_PATH) ? "aktivní" : "výchozí";
+		return `eldritch-footer: ${currentConfig.enabled ? "on" : "off"} · preset ${currentConfig.preset} · global ${globalActive} · kimi ${kimi} · z.ai ${zai}`;
 	}
 
-	function setEnabled(ctx: ExtensionContext, value: boolean) {
-		enabled = value;
-		pi.appendEntry(CONFIG_ENTRY_TYPE, { enabled });
+	function saveConfig(
+		ctx: ExtensionContext,
+		next: Partial<FooterConfig>,
+		persistGlobal = false,
+	) {
+		currentConfig = { ...currentConfig, ...next };
+		pi.appendEntry(CONFIG_ENTRY_TYPE, currentConfig);
+		if (persistGlobal) {
+			saveGlobalConfig(currentConfig);
+		}
 		apply(ctx);
-		ctx.ui.notify(
-			enabled ? "Eldritch footer enabled" : "Default footer restored",
-			"info",
-		);
 	}
 
 	pi.on("session_start", async (_event, ctx) => {
-		enabled = extractEnabled(ctx);
+		currentConfig = extractConfig(ctx);
 		apply(ctx);
 	});
 
 	const FOOTER_DOCS: Record<string, string> = {
+		minimal: "přepne do 1-řádkového minimalistického režimu",
+		compact: "přepne do 2-řádkového kompaktního režimu",
+		full: "přepne do plného víceřádkového režimu",
+		preset: "přepne režim zobrazení (minimal | compact | full)",
 		on: "zapne vlastní statusline / footer",
 		off: "vypne vlastní statusline a vrátí výchozí footer",
-		toggle: "přepne footer (zapnuto / vypnuto)",
-		status: "zobrazí aktuální stav a přehled kvót",
+		toggle: "přepne stav zapnuto / vypnuto",
+		status: "zobrazí aktuální konfiguraci a stav kvót",
 		refresh: "vynutí okamžitou aktualizaci kvót Kimi a Z.ai",
+		global: "správa globální konfigurace (show | clear)",
 		help: "zobrazí podrobnou nápovědu",
 	};
 
 	pi.registerCommand("footer", {
 		description:
-			"eldritch-footer: custom statusline s kvótami Kimi/Z.ai, kontextovým pruhem a barvami thinkingu",
-		getArgumentCompletions: (prefix: string) => {
+			"eldritch-footer: custom statusline (minimal, compact, full), kvóty a kontextový pruh",
+		getArgumentCompletions: async (
+			prefix: string,
+		): Promise<AutocompleteItem[] | null> => {
 			const tokens = prefix.split(/\s+/).filter(Boolean);
-			const typed = tokens[0] ?? "";
-			const SUBS: Array<[string, string]> = Object.entries(FOOTER_DOCS);
-			const items = SUBS.filter(([s]) => s.startsWith(typed.toLowerCase())).map(
-				([value, description]) => ({ value, label: value, description }),
-			);
+			const trailingSpace = /\s$/.test(prefix);
+			const normalizedPrefix = tokens.join(" ").toLowerCase();
+
+			// 2nd-level contextual argument completion
+			if (tokens.length > 1 || (trailingSpace && tokens.length === 1)) {
+				const cmd = tokens[0]?.toLowerCase();
+
+				if (cmd === "preset") {
+					const presets: AutocompleteItem[] = [
+						{
+							value: "preset minimal",
+							label: "preset minimal",
+							description:
+								"1-řádkový minimalistický režim (kontext, model, SPAI, ADR, LSP)",
+						},
+						{
+							value: "preset compact",
+							label: "preset compact",
+							description:
+								"2-řádkový vyvážený režim (větev, model, pruh, cena, tasky)",
+						},
+						{
+							value: "preset full",
+							label: "preset full",
+							description:
+								"Plný víceřádkový detailní režim (kvóty, tokeny, cache)",
+						},
+					];
+					const filtered = presets.filter((i) =>
+						i.value.toLowerCase().startsWith(normalizedPrefix),
+					);
+					return filtered.length > 0 ? filtered : null;
+				}
+
+				if (cmd === "global") {
+					const globalItems: AutocompleteItem[] = [
+						{
+							value: "global show",
+							label: "global show",
+							description: "zobrazit obsah ~/.pi/agent/eldritch-footer.json",
+						},
+						{
+							value: "global clear",
+							label: "global clear",
+							description: "resetovat globální konfiguraci na výchozí",
+						},
+					];
+					const filtered = globalItems.filter((i) =>
+						i.value.toLowerCase().startsWith(normalizedPrefix),
+					);
+					return filtered.length > 0 ? filtered : null;
+				}
+
+				return null;
+			}
+
+			// 1st-level subcommand completion
+			const typed = (tokens[0] ?? "").toLowerCase();
+			const items: AutocompleteItem[] = Object.entries(FOOTER_DOCS)
+				.filter(([key]) => key.toLowerCase().startsWith(typed))
+				.map(([value, description]) => ({ value, label: value, description }));
+
 			return items.length > 0 ? items : null;
 		},
 		handler: async (args, ctx) => {
-			const [subRaw] = args.trim().split(/\s+/).filter(Boolean);
-			const sub = subRaw?.toLowerCase();
-			if (sub === "status") {
+			const tokens = args.trim().split(/\s+/).filter(Boolean);
+			const isGlobal = tokens.some((t) => t.toLowerCase() === "--global");
+			const cleanTokens = tokens.filter((t) => t.toLowerCase() !== "--global");
+
+			const subcommand = (cleanTokens[0] ?? "").toLowerCase();
+			const param = (cleanTokens[1] ?? "").toLowerCase();
+
+			if (subcommand === "status") {
 				ctx.ui.notify(statusText(), "info");
 				return;
 			}
-			if (!sub || sub === "help") {
-				const kimi = readKimiApiKey() ? "nastaven (API klíč / OAuth)" : "nenalezen";
+
+			if (
+				!subcommand ||
+				subcommand === "help" ||
+				subcommand === "-h" ||
+				subcommand === "--help"
+			) {
+				const kimi = readKimiApiKey()
+					? "nastaven (API klíč / OAuth)"
+					: "nenalezen";
 				const zai = readZaiApiKey() ? "nastaven (API klíč)" : "nenalezen";
+				const helpText = [
+					`# eldritch-footer — stav: ${currentConfig.enabled ? "ZAPNUTO (ON)" : "VYPNUTO (OFF)"} | režim: ${currentConfig.preset.toUpperCase()}`,
+					"Vlastní přizpůsobitelný statusline pro Pi coding agent s podporou minimalistického i detailního zobrazení.",
+					"",
+					"### Příkazy:",
+					"  /footer minimal           — přepne do 1-řádkového minimalistického režimu",
+					"  /footer compact           — přepne do 2-řádkového kompaktního režimu",
+					"  /footer full              — přepne do plného víceřádkového režimu",
+					"  /footer preset <preset>   — volba režimu (minimal | compact | full)",
+					"  /footer on | off | toggle — zapnutí / vypnutí vlastního footeru",
+					"  /footer refresh           — okamžité obnovení kvót Kimi / Z.ai",
+					"  /footer status            — diagnostika a aktuální stav",
+					"  /footer global show|clear — správa globální konfigurace",
+					"",
+					`Kimi kvóta API klíč: ${kimi}`,
+					`Z.ai kvóta API klíč: ${zai}`,
+					`Auto-compaction detekce: ${isAutoCompactEnabled(ctx.cwd) ? "aktivní" : "vypnuto"}`,
+					`Globální konfigurace: ${existsSync(GLOBAL_CONFIG_PATH) ? GLOBAL_CONFIG_PATH : "nenastavena (výchozí)"}`,
+					"",
+					"Tip: Přidejte `--global` k libovolnému příkazu pro trvalé uložení do ~/.pi/agent/eldritch-footer.json",
+				].join("\n");
+				ctx.ui.notify(helpText, "info");
+				return;
+			}
+
+			if (["minimal", "compact", "full"].includes(subcommand)) {
+				saveConfig(
+					ctx,
+					{ enabled: true, preset: subcommand as FooterPreset },
+					isGlobal,
+				);
 				ctx.ui.notify(
-					[
-						`eldritch-footer — stav: ${enabled ? "ZAPNUTO (ON)" : "VYPNUTO (OFF)"}`,
-						"Vlastní víceřádkový footer / statusline s měřiči kvót Kimi / Z.ai, pruhem kontextu a barvami thinkingu.",
-						"",
-						"Příkazy:",
-						"/footer             — tato nápověda + stav",
-						"/footer on          — zapne vlastní statusline",
-						"/footer off         — vypne vlastní statusline (vrátí default footer)",
-						"/footer toggle      — přepne stav zapnuto/vypnuto",
-						"/footer refresh     — okamžitě znovu načte kvóty Kimi a Z.ai",
-						"/footer status      — zobrazí jednořádkový stav",
-						"",
-						`Kimi kvóta API klíč: ${kimi}`,
-						`Z.ai kvóta API klíč: ${zai}`,
-						`Auto-compaction detekce: ${isAutoCompactEnabled(ctx.cwd) ? "aktivní" : "vypnuto"}`,
-						"Stav se ukládá do session — přežije /reload i restart.",
-					].join("\n"),
+					`Eldritch footer: nastaven režim "${subcommand}"${isGlobal ? " (uloženo globálně)" : ""}`,
 					"info",
 				);
 				return;
 			}
-			if (sub === "on" || sub === "enable") {
-				setEnabled(ctx, true);
+
+			if (subcommand === "preset") {
+				if (["minimal", "compact", "full"].includes(param)) {
+					saveConfig(
+						ctx,
+						{ enabled: true, preset: param as FooterPreset },
+						isGlobal,
+					);
+					ctx.ui.notify(
+						`Eldritch footer: nastaven režim "${param}"${isGlobal ? " (uloženo globálně)" : ""}`,
+						"info",
+					);
+					return;
+				}
+				ctx.ui.notify(
+					"Použití: /footer preset minimal|compact|full [--global]",
+					"warning",
+				);
 				return;
 			}
-			if (sub === "off" || sub === "disable") {
-				setEnabled(ctx, false);
+
+			if (subcommand === "on" || subcommand === "enable") {
+				saveConfig(ctx, { enabled: true }, isGlobal);
+				ctx.ui.notify(
+					`Eldritch footer zapnut (${currentConfig.preset})${isGlobal ? " (uloženo globálně)" : ""}`,
+					"info",
+				);
 				return;
 			}
-			if (sub === "toggle") {
-				setEnabled(ctx, !enabled);
+
+			if (subcommand === "off" || subcommand === "disable") {
+				saveConfig(ctx, { enabled: false }, isGlobal);
+				ctx.ui.notify(
+					`Eldritch footer vypnut (výchozí footer obnoven)${isGlobal ? " (uloženo globálně)" : ""}`,
+					"info",
+				);
 				return;
 			}
-			if (sub === "refresh") {
+
+			if (subcommand === "toggle") {
+				saveConfig(ctx, { enabled: !currentConfig.enabled }, isGlobal);
+				ctx.ui.notify(
+					`Eldritch footer: ${currentConfig.enabled ? "ON" : "OFF"}${isGlobal ? " (uloženo globálně)" : ""}`,
+					"info",
+				);
+				return;
+			}
+
+			if (subcommand === "refresh") {
 				void refreshKimiQuota(true);
 				void refreshZaiQuota(true);
 				ctx.ui.notify("Eldritch footer: kvóty obnoveny", "info");
 				return;
 			}
+
+			if (subcommand === "global") {
+				if (param === "clear" || param === "reset") {
+					clearGlobalConfig();
+					ctx.ui.notify(
+						"Globální konfigurace eldritch-footer resetována na výchozí.",
+						"info",
+					);
+					return;
+				}
+				if (!param || param === "show") {
+					ctx.ui.notify(
+						existsSync(GLOBAL_CONFIG_PATH)
+							? `Globální konfigurace (${GLOBAL_CONFIG_PATH}):\n${readFileSync(GLOBAL_CONFIG_PATH, "utf8")}`
+							: "Globální konfigurace dosud nevytvořena (používají se výchozí hodnoty).",
+						"info",
+					);
+					return;
+				}
+				ctx.ui.notify("Použití: /footer global show|clear", "warning");
+				return;
+			}
+
 			ctx.ui.notify(
-				"Neznámý příkaz. Použijte: /footer [on|off|toggle|status|refresh|help]",
+				`Neznámý příkaz "${subcommand}". Použijte: /footer help`,
 				"warning",
 			);
 		},
