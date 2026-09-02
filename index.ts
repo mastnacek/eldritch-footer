@@ -502,6 +502,7 @@ export default function (pi: ExtensionAPI) {
 			void refreshZaiQuota();
 
 		ctx.ui.setFooter((tui, theme: Theme, footerData: FooterData) => {
+			(globalThis as any).__pi_footer_data = footerData;
 			requestRender = () => tui.requestRender();
 			const unsubBranch = footerData.onBranchChange(() => {
 				refreshGitStatus(ctx.cwd);
