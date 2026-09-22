@@ -490,7 +490,9 @@ export default function (pi: ExtensionAPI) {
 	pi.on("turn_end", (_event, ctx) => refreshGitStatus(ctx.cwd));
 
 	function apply(ctx: ExtensionContext) {
-		if (!currentConfig.enabled || ctx.mode !== "tui") {
+		// Never touch ctx.ui without a UI (AGENTS.md §6). `mode === "tui"` already
+		// implies hasUI, but check both so a non-TUI UI context is also excluded.
+		if (!currentConfig.enabled || !ctx.hasUI || ctx.mode !== "tui") {
 			ctx.ui.setFooter(undefined);
 			return;
 		}
@@ -997,6 +999,22 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		currentConfig = extractConfig(ctx);
 		apply(ctx);
+	});
+
+	// Drop module-level session state on shutdown so nothing stale leaks into a
+	// replacement session (AGENTS.md §5/§6). Config is reloaded on session_start.
+	pi.on("session_shutdown", () => {
+		currentConfig = { ...DEFAULT_CONFIG };
+		cachedGitStatus = { dirty: false, ahead: 0, behind: 0 };
+		kimiUsages = null;
+		zaiQuota = null;
+		for (const poll of [kimiPollState, zaiPollState]) {
+			poll.fetchedAt = 0;
+			poll.inFlight = false;
+			poll.consecutiveErrors = 0;
+			poll.lastLatencyMs = 0;
+			poll.currentTtlMs = BASE_QUOTA_TTL_MS;
+		}
 	});
 
 	const FOOTER_DOCS: Record<string, string> = {
