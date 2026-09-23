@@ -376,22 +376,30 @@ function contextBar(percent: number | null, width = 10): string {
 }
 
 export default function (pi: ExtensionAPI) {
+	/** Unsubscribers from every `pi.on()`; drained on session_shutdown (AGENTS §5). */
+	const unsubscribers: Array<() => void> = [];
+
+	/** Retain a `pi.on()` return value; older engine typings declare it void. */
+	const track = (result: unknown): void => {
+		if (typeof result === "function") unsubscribers.push(result as () => void);
+	};
+
 	let requestRender: (() => void) | undefined;
 
 	const rerender = () => requestRender?.();
 
 	// Re-render when footer-relevant state changes
-	pi.on("thinking_level_select", rerender);
-	pi.on("model_select", rerender);
-	pi.on("turn_end", rerender);
-	pi.on("session_compact", rerender);
-	pi.on("session_info_changed", rerender);
+	track(pi.on("thinking_level_select", rerender));
+	track(pi.on("model_select", rerender));
+	track(pi.on("turn_end", rerender));
+	track(pi.on("session_compact", rerender));
+	track(pi.on("session_info_changed", rerender));
 	// Live updates: redraw on every message/tool boundary so the running
 	// session usage & cost stay current DURING a turn, not just after it.
-	pi.on("message_start", rerender);
-	pi.on("message_end", rerender);
-	pi.on("tool_execution_start", rerender);
-	pi.on("tool_execution_end", rerender);
+	track(pi.on("message_start", rerender));
+	track(pi.on("message_end", rerender));
+	track(pi.on("tool_execution_start", rerender));
+	track(pi.on("tool_execution_end", rerender));
 
 	async function refreshKimiQuota(force = false): Promise<void> {
 		if (kimiPollState.inFlight) return;
@@ -437,7 +445,7 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
-	pi.on("turn_end", () => void refreshKimiQuota());
+	track(pi.on("turn_end", () => void refreshKimiQuota()));
 
 	async function refreshZaiQuota(force = false): Promise<void> {
 		if (zaiPollState.inFlight) return;
@@ -484,10 +492,10 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
-	pi.on("turn_end", () => void refreshZaiQuota());
+	track(pi.on("turn_end", () => void refreshZaiQuota()));
 
 	// Refresh git status cache on every turn and on branch changes
-	pi.on("turn_end", (_event, ctx) => refreshGitStatus(ctx.cwd));
+	track(pi.on("turn_end", (_event, ctx) => refreshGitStatus(ctx.cwd)));
 
 	function apply(ctx: ExtensionContext) {
 		// Never touch ctx.ui without a UI (AGENTS.md §6). `mode === "tui"` already
@@ -996,14 +1004,15 @@ export default function (pi: ExtensionAPI) {
 		apply(ctx);
 	}
 
-	pi.on("session_start", async (_event, ctx) => {
+	track(pi.on("session_start", async (_event, ctx) => {
 		currentConfig = extractConfig(ctx);
 		apply(ctx);
-	});
+	}));
 
 	// Drop module-level session state on shutdown so nothing stale leaks into a
 	// replacement session (AGENTS.md §5/§6). Config is reloaded on session_start.
 	pi.on("session_shutdown", () => {
+		while (unsubscribers.length > 0) unsubscribers.pop()?.();
 		currentConfig = { ...DEFAULT_CONFIG };
 		cachedGitStatus = { dirty: false, ahead: 0, behind: 0 };
 		kimiUsages = null;
