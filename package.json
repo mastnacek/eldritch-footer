@@ -28,7 +28,9 @@
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*"
+    "@earendil-works/pi-tui": "*",
+    "@earendil-works/pi-agent-core": "*",
+    "typebox": "*"
   },
   "homepage": "https://github.com/mastnacek/eldritch-footer#readme",
   "repository": {
@@ -41,5 +43,8 @@
   "devDependencies": {
     "@types/node": "^26.4.0",
     "typescript": "^7.0.2"
+  },
+  "scripts": {
+    "test": "node --test test/**/*.test.js"
   }
 }
