@@ -18,6 +18,7 @@
   "files": [
     "README.md",
     "index.ts",
+    "src",
     "package.json"
   ],
   "pi": {
@@ -45,6 +46,6 @@
     "typescript": "^7.0.2"
   },
   "scripts": {
-    "test": "node --test test/**/*.test.js"
+    "test": "npx tsx --test test/**/*.test.js"
   }
 }
